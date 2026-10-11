@@ -1,7 +1,6 @@
 package io.github.sebminecrafter.noteBlockEasy;
 
 import org.bukkit.Location;
-import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitRunnable;
@@ -12,11 +11,18 @@ import java.util.List;
 import java.util.logging.Logger;
 
 public class SongPlayer {
-    private static final Sound SOUND = Sound.BLOCK_NOTE_BLOCK_BASS;
     private static final float VOLUME = 1f;
 
-    /** Notes that sound together, followed by a wait (in steps) until the next frame. */
-    private record Frame(List<Integer> notes, int delay) {
+    /**
+     * A note and the sound key of the instrument it is played with.
+     */
+    private record PlayedNote(String sound, int note) {
+    }
+
+    /**
+     * Notes that sound together, followed by a wait (in steps) until the next frame.
+     */
+    private record Frame(List<PlayedNote> notes, int delay) {
     }
 
     private final Plugin plugin;
@@ -26,7 +32,7 @@ public class SongPlayer {
     private final long ticksPerStep;
 
     public SongPlayer(Plugin plugin, Song song) {
-        this(plugin, song, 2); // 2 ticks = 1 redstone tick, the classic note block speed
+        this(plugin, song, 2); // 2 ticks = 1 redstone tick, normal not block speed
     }
 
     public SongPlayer(Plugin plugin, Song song, long ticksPerStep) {
@@ -37,12 +43,11 @@ public class SongPlayer {
         this.logger = plugin.getLogger();
         this.song = song;
         this.ticksPerStep = ticksPerStep;
-        this.frames = compile(song.notes());
+        this.frames = compile(song);
     }
 
     /**
-     * Starts playing the song. Cancel the returned task to stop it,
-     * or returns null if the location has no world.
+     * Starts playing the song, cancels if world is {@code null}
      */
     public BukkitTask playSongAt(Location location) {
         World world = location.getWorld();
@@ -70,24 +75,33 @@ public class SongPlayer {
                     return;
                 }
                 Frame frame = frames.get(index++);
-                for (int note : frame.notes()) {
-                    world.playSound(target, SOUND, VOLUME, pitch(note));
+                for (PlayedNote played : frame.notes()) {
+                    world.playSound(target, played.sound(), VOLUME, pitch(played.note()));
                 }
                 remaining = Math.max(0, frame.delay() - 1);
             }
         }.runTaskTimer(plugin, 0L, ticksPerStep);
     }
 
-    /** Splits the flat note/delay list into frames: every delay closes the notes before it. */
-    private static List<Frame> compile(List<Integer> values) {
+    /**
+     * Each frame represents one step of the song
+     */
+    private static List<Frame> compile(Song song) {
         List<Frame> frames = new ArrayList<>();
-        List<Integer> pending = new ArrayList<>();
-        for (int value : values) {
-            if (value >= 0) {
-                pending.add(value);
-            } else {
-                frames.add(new Frame(List.copyOf(pending), -value));
-                pending.clear();
+        List<PlayedNote> pending = new ArrayList<>();
+        String sound = Instruments.resolve(song.instrument());
+
+        for (Object value : song.notes()) {
+            if (value instanceof String instrument) {
+                sound = Instruments.resolve(instrument);
+            } else if (value instanceof Number number) {
+                int n = number.intValue();
+                if (n >= 0) {
+                    pending.add(new PlayedNote(sound, n));
+                } else {
+                    frames.add(new Frame(List.copyOf(pending), -n));
+                    pending.clear();
+                }
             }
         }
         if (!pending.isEmpty()) {
@@ -96,7 +110,9 @@ public class SongPlayer {
         return frames;
     }
 
-    /** Note block pitch: 0 clicks = 0.5, 12 = 1.0, 24 = 2.0 (Minecraft limits playSound to that range). */
+    /**
+     * Note block pitch (0-24)
+     */
     private static float pitch(int note) {
         return (float) Math.pow(2, (note - 12) / 12.0);
     }

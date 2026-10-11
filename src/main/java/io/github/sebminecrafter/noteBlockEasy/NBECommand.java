@@ -31,6 +31,10 @@ public class NBECommand implements CommandExecutor, TabCompleter {
                     sender.sendMessage(ChatColor.YELLOW + name);
                 }
                 return true;
+            case "instruments":
+                sender.sendMessage(ChatColor.GOLD + "Built-in (vanilla) Instruments:");
+                sender.sendMessage(ChatColor.YELLOW + String.join(", ", Instruments.names()));
+                return true;
             case "reload":
                 songs.loadAllSongs();
                 sender.sendMessage(ChatColor.GOLD + "Reloaded songs!");
@@ -46,10 +50,10 @@ public class NBECommand implements CommandExecutor, TabCompleter {
 
     @Override
     public List<String> onTabComplete(@NonNull CommandSender sender, @NonNull Command command, @NonNull String label, String @NonNull [] args) {
-        // /nbe <list/reload>
+        // /nbe <list/instruments/reload/stop>
         return args.length > 1 ? List.of() :
                List.of(
-                       "list", "reload", "stop"
+                       "list", "instruments", "reload", "stop"
                );
     }
 }

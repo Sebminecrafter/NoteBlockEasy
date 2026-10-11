@@ -20,7 +20,7 @@ commands:
   nbe:
     description: "Management command for NoteBlockEasy"
     aliases: [ 'noteblockeasy' ]
-    usage: "/<command> <list/reload/stop>"
+    usage: "/<command> <list/instruments/reload/stop>"
     permission: noteblockeasy.nbe
 
 default-permission: op

@@ -5,12 +5,17 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.stream.Collectors;
 
 import static io.github.sebminecrafter.noteBlockEasy.NoteBlockEasy.logger;
 
 public class Songs {
+    /** Subfolder for songs that fail to load */
+    static final String FAILED_FOLDER = "failed";
+
     private final File songsFolder;
     private final List<Song> songs;
 
@@ -42,6 +47,7 @@ public class Songs {
 
         YamlConfiguration yaml = new YamlConfiguration();
         yaml.set("name", song.name().replaceAll("[^a-zA-Z0-9._-]", "_"));
+        yaml.set("instrument", song.instrument());
         yaml.set("notes", song.notes());
 
         logger.info("Saving song: " + song.name());
@@ -54,21 +60,48 @@ public class Songs {
         if (!file.isFile()) {
             return Optional.empty();
         }
+        return loadFile(file);
+    }
 
+    /** Loads a song from {@code file}. Returns empty if it is invalid. */
+    private Optional<Song> loadFile(File file) {
         YamlConfiguration yaml = YamlConfiguration.loadConfiguration(file);
         String name = yaml.getString("name");
-        List<Integer> notes = readIntegerList(yaml.getList("notes"));
+        String instrument = yaml.getString("instrument", Instruments.DEFAULT);
+        List<Object> notes = readNotes(yaml.getList("notes"));
 
         if (name == null || notes == null) {
-            logger.warning("Could not load song: " + songName);
+            logger.warning("Could not load song: " + file.getName());
             return Optional.empty();
         }
 
         name = name.replaceAll("[^a-zA-Z0-9._-]", "_");
 
-        logger.info("Loaded song: " + songName);
+        warnAboutInvalidInstruments(name, instrument, notes);
 
-        return Optional.of(new Song(name, notes));
+        logger.info("Loaded song: " + file.getName());
+
+        return Optional.of(new Song(name, instrument, notes));
+    }
+
+    /**
+     * Moves a song file that could not be loaded into the {@link #FAILED_FOLDER} directory.
+     */
+    private void moveToFailedFolder(File file) {
+        Path folder = new File(songsFolder, FAILED_FOLDER).toPath();
+        try {
+            Files.createDirectories(folder);
+            Path target = folder.resolve(file.getName());
+            for (int i = 1; Files.exists(target); i++) { // never overwrite an earlier failed file
+                target = folder.resolve(i + "_" + file.getName());
+            }
+            Files.move(file.toPath(), target);
+            logger.warning("Moved '" + file.getName() + "' to " + songsFolder.getName() + "/" + FAILED_FOLDER
+                    + "/ because it could not be loaded.");
+        } catch (IOException e) {
+            logger.severe("Could not move '" + file.getName() + "' to the failed folder (" + e.getMessage()
+                    + "). It may be deleted when the server stops.");
+        }
     }
 
     public void saveAllSongs() {
@@ -112,9 +145,14 @@ public class Songs {
             return;
         }
 
-        Arrays.stream(files).forEach(
-                file -> loadSong(file.getName()).ifPresent(songs::add)
-        );
+        for (File file : files) {
+            Optional<Song> song = loadFile(file);
+            if (song.isPresent()) {
+                songs.add(song.get());
+            } else {
+                moveToFailedFolder(file);
+            }
+        }
     }
 
     private File songFile(String songName) {
@@ -127,18 +165,41 @@ public class Songs {
         return new File(songsFolder, safeName + (safeName.endsWith(".yml") ? "" : ".yml"));
     }
 
-    private List<Integer> readIntegerList(List<?> values) {
+    /**
+     * Reads the {@code notes} list: numbers become integers (notes and waits) and strings are kept
+     * as instrument switches. Returns null if the list is missing or has any other kind of entry.
+     */
+    static List<Object> readNotes(List<?> values) {
         if (values == null) {
             return null;
         }
 
-        List<Integer> result = new ArrayList<>();
+        List<Object> result = new ArrayList<>();
         for (Object value : values) {
-            if (!(value instanceof Number number)) {
+            if (value instanceof Number number) {
+                result.add(number.intValue());
+            } else if (value instanceof String instrument && !instrument.isBlank()) {
+                result.add(instrument.trim());
+            } else {
                 return null;
             }
-            result.add(number.intValue());
         }
         return result;
+    }
+
+    /** Warn on invalid instrument names */
+    private static void warnAboutInvalidInstruments(String songName, String defaultInstrument, List<Object> notes) {
+        Set<String> used = new LinkedHashSet<>();
+        used.add(defaultInstrument);
+        for (Object value : notes) {
+            if (value instanceof String instrument) {
+                used.add(instrument);
+            }
+        }
+        for (String instrument : used) {
+            if (!Instruments.isValid(instrument)) {
+                logger.warning("Song '" + songName + "' uses an invalid instrument/sound key: '" + instrument + "'");
+            }
+        }
     }
 }
