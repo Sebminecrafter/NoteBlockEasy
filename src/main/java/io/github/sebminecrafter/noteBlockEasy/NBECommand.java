@@ -38,6 +38,7 @@ public class NBECommand implements CommandExecutor, TabCompleter {
             case "stop":
                 sender.sendMessage(ChatColor.GOLD + "Stopping songs!");
                 Bukkit.getScheduler().cancelTasks(plugin);
+                return true;
         }
 
         return false;
