@@ -14,6 +14,7 @@ public final class NoteBlockEasy extends JavaPlugin {
         logger = getLogger();
 
         songs = new Songs(this);
+        new NbsConverter(this).convertAll();
         songs.loadAllSongs();
 
         PluginCommand playsong = getCommand("playsong");

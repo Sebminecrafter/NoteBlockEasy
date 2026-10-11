@@ -39,6 +39,10 @@ An instrument is a Minecraft sound key, so anything that's in the game or a reso
 - **Custom sounds** from a resource pack, like `"coolsounds:sound1"`, as defined in the pack's `sounds.json`.
   The player needs the resource pack for these to be audible.
 
+### NBS songs
+Any `.nbs` files in the `songs` directory are converted to YAML on startup, then moved to `nbs_converted` inside the
+`songs` directory. Notes are shifted by octaves into the 0-24 range, and instruments are kept.
+
 ### Songs that fail to load
 Any songs that can't load for some reason get moved to `failed` inside the `songs` directory, so they don't get deleted
 on the final save during shutdown.

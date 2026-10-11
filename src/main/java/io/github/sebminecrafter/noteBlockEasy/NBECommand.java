@@ -6,16 +6,16 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
-import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.java.JavaPlugin;
 import org.jspecify.annotations.NonNull;
 
 import java.util.List;
 
 public class NBECommand implements CommandExecutor, TabCompleter {
-    private final Plugin plugin;
+    private final JavaPlugin plugin;
     private final Songs songs;
 
-    public NBECommand(Plugin plugin, Songs songs) {
+    public NBECommand(JavaPlugin plugin, Songs songs) {
         this.plugin = plugin;
         this.songs = songs;
     }
@@ -36,6 +36,7 @@ public class NBECommand implements CommandExecutor, TabCompleter {
                 sender.sendMessage(ChatColor.YELLOW + String.join(", ", Instruments.names()));
                 return true;
             case "reload":
+                new NbsConverter(plugin).convertAll();
                 songs.loadAllSongs();
                 sender.sendMessage(ChatColor.GOLD + "Reloaded songs!");
                 return true;

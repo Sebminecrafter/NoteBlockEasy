@@ -1,0 +1,287 @@
+diff --git a/README.md b/README.md
+index 39ea078..b49efee 100644
+--- a/README.md
++++ b/README.md
+@@ -39,6 +39,10 @@ An instrument is a Minecraft sound key, so anything that's in the game or a reso
+ - **Custom sounds** from a resource pack, like `"coolsounds:sound1"`, as defined in the pack's `sounds.json`.
+   The player needs the resource pack for these to be audible.
+ 
++### NBS songs
++Any `.nbs` files in the `songs` directory are converted to YAML on startup, then moved to `nbs_converted` inside the
++`songs` directory. Notes are shifted by octaves into the 0-24 range, and instruments are kept.
++
+ ### Songs that fail to load
+ Any songs that can't load for some reason get moved to `failed` inside the `songs` directory, so they don't get deleted
+ on the final save during shutdown.
+diff --git a/src/main/java/io/github/sebminecrafter/noteBlockEasy/NbsConverter.java b/src/main/java/io/github/sebminecrafter/noteBlockEasy/NbsConverter.java
+new file mode 100644
+index 0000000..cf76e6c
+--- /dev/null
++++ b/src/main/java/io/github/sebminecrafter/noteBlockEasy/NbsConverter.java
+@@ -0,0 +1,254 @@
++package io.github.sebminecrafter.noteBlockEasy;
++
++import org.bukkit.plugin.java.JavaPlugin;
++
++import java.io.File;
++import java.io.IOException;
++import java.nio.BufferUnderflowException;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.nio.charset.StandardCharsets;
++import java.nio.file.Files;
++import java.nio.file.Path;
++import java.util.*;
++
++import static io.github.sebminecrafter.noteBlockEasy.NoteBlockEasy.logger;
++
++/** Converts .nbs (Note Block Studio) files in the songs folder to YAML songs, using default settings. */
++public class NbsConverter {
++    /** Subfolder the .nbs files are moved to after converting */
++    static final String CONVERTED_FOLDER = "nbs_converted";
++
++    /** NBS instrument index -> instrument name */
++    private static final String[] VANILLA = {
++            "harp", "bass", "basedrum", "snare", "hat", "guitar", "flute", "bell",
++            "chime", "xylophone", "iron_xylophone", "cow_bell", "didgeridoo", "bit", "banjo", "pling"};
++    private static final String CUSTOM_DEFAULT = "harp";
++
++    /** NBS key 33 is note block pitch 0 */
++    private static final int KEY_OFFSET = 33;
++
++    private record Note(int tick, int key, int inst) {
++    }
++
++    private record Nbs(String name, int vanilla, List<Note> notes) {
++    }
++
++    private record Entry(int value, String instrument) {
++    }
++
++    private final File songsFolder;
++
++    public NbsConverter(JavaPlugin plugin) {
++        this.songsFolder = new File(plugin.getDataFolder(), "songs");
++    }
++
++    public void convertAll() {
++        File[] files = songsFolder.listFiles(
++                (dir, name) -> name.toLowerCase(Locale.ROOT).endsWith(".nbs")
++        );
++
++        if (files == null || files.length == 0) {
++            return;
++        }
++
++        logger.info("Converting " + files.length + " .nbs song(s)");
++
++        for (File file : files) {
++            try {
++                convert(file);
++            } catch (IOException | RuntimeException e) {
++                logger.warning("Could not convert '" + file.getName() + "': " + e.getMessage());
++            }
++        }
++    }
++
++    private void convert(File file) throws IOException {
++        Nbs nbs = parse(Files.readAllBytes(file.toPath()));
++        if (nbs.notes().isEmpty()) {
++            throw new IOException("no notes");
++        }
++
++        String base = nbs.name().isBlank() ? file.getName().replaceAll("(?i)\\.nbs$", "") : nbs.name();
++        String name = base.replaceAll("[^a-zA-Z0-9._-]", "_");
++        if (name.equals(".") || name.equals("..")) {
++            name = "song";
++        }
++
++        String unique = name;
++        for (int i = 1; new File(songsFolder, unique + ".yml").exists(); i++) { // never overwrite a song
++            unique = name + "_" + i;
++        }
++
++        Path yml = new File(songsFolder, unique + ".yml").toPath();
++        Files.writeString(yml, toYaml(nbs, unique));
++
++        try {
++            moveToConvertedFolder(file);
++        } catch (IOException e) {
++            Files.deleteIfExists(yml); // otherwise it would be converted again on the next start
++            throw e;
++        }
++        logger.info("Converted song: " + file.getName() + " -> " + unique + ".yml");
++    }
++
++    private void moveToConvertedFolder(File file) throws IOException {
++        Path folder = new File(songsFolder, CONVERTED_FOLDER).toPath();
++        Files.createDirectories(folder);
++        Path target = folder.resolve(file.getName());
++        for (int i = 1; Files.exists(target); i++) {
++            target = folder.resolve(i + "_" + file.getName());
++        }
++        Files.move(file.toPath(), target);
++    }
++
++    private static Nbs parse(byte[] data) throws IOException {
++        ByteBuffer buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
++        int version = 0;
++        int vanilla = 10; // classic files have the 10 original instruments
++        List<Note> notes = new ArrayList<>();
++        String name;
++
++        try {
++            if (u16(buf) == 0) {
++                version = u8(buf);
++                vanilla = u8(buf);
++                if (version >= 3) {
++                    u16(buf);
++                }
++            }
++            u16(buf); // layer count
++            name = str(buf);
++            str(buf);
++            str(buf);
++            str(buf);
++            skip(buf, 25); // tempo, autosave, time signature, statistics
++            str(buf);
++            if (version >= 4) {
++                skip(buf, 4);
++            }
++
++            int tick = -1;
++            try {
++                while (true) {
++                    int jump = u16(buf);
++                    if (jump == 0) {
++                        break;
++                    }
++                    tick += jump;
++                    while (u16(buf) != 0) {
++                        int inst = u8(buf);
++                        int key = u8(buf);
++                        if (version >= 4) {
++                            skip(buf, 4);
++                        }
++                        notes.add(new Note(tick, key, inst));
++                    }
++                }
++            } catch (BufferUnderflowException | IllegalArgumentException e) {
++                if (notes.isEmpty()) {
++                    throw e;
++                }
++            }
++        } catch (BufferUnderflowException | IllegalArgumentException e) {
++            throw new IOException("not a valid .nbs file");
++        }
++
++        return new Nbs(name, vanilla, notes);
++    }
++
++    private static int u8(ByteBuffer buf) {
++        return buf.get() & 0xFF;
++    }
++
++    private static int u16(ByteBuffer buf) {
++        return buf.getShort() & 0xFFFF;
++    }
++
++    private static void skip(ByteBuffer buf, int bytes) {
++        buf.position(buf.position() + bytes);
++    }
++
++    private static String str(ByteBuffer buf) {
++        int length = buf.getInt();
++        if (length < 0 || length > buf.remaining()) {
++            throw new IllegalArgumentException("bad string length");
++        }
++        byte[] bytes = new byte[length];
++        buf.get(bytes);
++        return new String(bytes, StandardCharsets.UTF_8);
++    }
++
++    private static String instrumentName(Nbs nbs, int index) {
++        return index < nbs.vanilla() && index < VANILLA.length ? VANILLA[index] : CUSTOM_DEFAULT;
++    }
++
++    private static String yamlKey(String key) {
++        if (Instruments.names().contains(key)) {
++            return key;
++        }
++        return "\"" + key.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
++    }
++
++    private static String toYaml(Nbs nbs, String name) {
++        Map<Integer, List<Entry>> groups = new TreeMap<>();
++        Map<String, Integer> tally = new LinkedHashMap<>();
++
++        for (Note note : nbs.notes()) {
++            int value = note.key() - KEY_OFFSET;
++            while (value < 0) { // shift by octaves into range
++                value += 12;
++            }
++            while (value > 24) {
++                value -= 12;
++            }
++            String instrument = instrumentName(nbs, note.inst());
++            groups.computeIfAbsent(note.tick(), t -> new ArrayList<>()).add(new Entry(value, instrument));
++            tally.merge(instrument, 1, Integer::sum);
++        }
++
++        // Start on the most used instrument so most notes need no switch
++        String current = Instruments.DEFAULT;
++        int best = 0;
++        for (Map.Entry<String, Integer> entry : tally.entrySet()) {
++            if (entry.getValue() > best) {
++                best = entry.getValue();
++                current = entry.getKey();
++            }
++        }
++
++        StringBuilder out = new StringBuilder();
++        out.append("name: \"").append(name).append("\"\n");
++        out.append("instrument: ").append(yamlKey(current)).append('\n');
++        out.append("notes:\n");
++
++        int last = 0;
++        for (Map.Entry<Integer, List<Entry>> group : groups.entrySet()) {
++            int delay = group.getKey() - last;
++            if (delay > 0) {
++                out.append(" - ").append(-delay).append('\n');
++            }
++
++            // Group a chord by instrument, current one first, so each switch is only written once
++            Map<String, List<Integer>> byInstrument = new LinkedHashMap<>();
++            for (Entry entry : group.getValue()) {
++                byInstrument.computeIfAbsent(entry.instrument(), i -> new ArrayList<>()).add(entry.value());
++            }
++            List<String> order = new ArrayList<>(byInstrument.keySet());
++            String start = current;
++            order.sort(Comparator.comparing(i -> !i.equals(start)));
++
++            for (String instrument : order) {
++                if (!instrument.equals(current)) {
++                    out.append(" - ").append(yamlKey(instrument)).append('\n');
++                    current = instrument;
++                }
++                for (int value : byInstrument.get(instrument)) {
++                    out.append(" - ").append(value).append('\n');
++                }
++            }
++            last = group.getKey();
++        }
++        return out.toString();
++    }
++}
+diff --git a/src/main/java/io/github/sebminecrafter/noteBlockEasy/NoteBlockEasy.java b/src/main/java/io/github/sebminecrafter/noteBlockEasy/NoteBlockEasy.java
+index 5be4934..4a5edad 100644
+--- a/src/main/java/io/github/sebminecrafter/noteBlockEasy/NoteBlockEasy.java
++++ b/src/main/java/io/github/sebminecrafter/noteBlockEasy/NoteBlockEasy.java
+@@ -14,6 +14,7 @@ public final class NoteBlockEasy extends JavaPlugin {
+         logger = getLogger();
+ 
+         songs = new Songs(this);
++        new NbsConverter(this).convertAll();
+         songs.loadAllSongs();
+ 
+         PluginCommand playsong = getCommand("playsong");
