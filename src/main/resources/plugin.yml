@@ -1,0 +1,35 @@
+name: NoteBlockEasy
+description: $description
+prefix: NBE
+version: '${version}'
+
+main: io.github.sebminecrafter.noteBlockEasy.NoteBlockEasy
+api-version: '1.21'
+load: STARTUP
+
+author: Sebminecrafter
+authors: [ Sebminecrafter ]
+website: https://github.com/Sebminecrafter/NoteBlockEasy
+
+commands:
+  playsong:
+    description: "Play a note block song"
+    aliases: []
+    usage: "/<command> <song name> [player]/[x] [y] [z]"
+    permission: noteblockeasy.playsong
+  nbe:
+    description: "Management command for NoteBlockEasy"
+    aliases: [ 'noteblockeasy' ]
+    usage: "/<command> <list/reload/stop>"
+    permission: noteblockeasy.nbe
+
+default-permission: op
+permissions:
+  noteblockeasy:
+    description: "Parent permission for all NBE functions"
+    default: op
+    children:
+      noteblockeasy.playsong:
+        description: "Use the playsong command"
+      noteblockeasy.nbe:
+        description: "Management command for NoteBlockEasy"
